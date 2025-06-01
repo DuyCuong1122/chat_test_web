@@ -98,6 +98,9 @@
     </footer>
 
     <script>
+      let lastMessageId = 0;
+      let waitingBotDiv = null;
+
       async function loadMessages() {
         const chatbox = document.getElementById("chatbox");
         try {
@@ -105,105 +108,108 @@
             "https://innovisionserver.click/messages/customer/1"
           );
           const messages = await response.json();
-          console.log("Dữ liệu messages:", messages);
 
-          messages.forEach((message) => {
-            const messageClass = message.is_from_customer ? "user" : "bot";
-            const div = document.createElement("div");
-            div.classList.add("message", messageClass);
-            div.textContent = message.content;
-            chatbox.appendChild(div);
-          });
+          messages
+            .sort((a, b) => a.id - b.id)
+            .forEach((message) => {
+              if (message.id > lastMessageId) {
+                if (
+                  message.is_from_customer ||
+                  message.content !== "Không có phản hồi từ chatbot."
+                ) {
+                  const messageClass = message.is_from_customer
+                    ? "user"
+                    : "bot";
+                  const div = document.createElement("div");
+                  div.classList.add("message", messageClass);
+                  div.textContent = message.content;
+                  chatbox.appendChild(div);
 
-          chatbox.scrollTop = chatbox.scrollHeight;
+                  // Nếu có div đang đợi phản hồi từ bot → xóa nó
+                  if (!message.is_from_customer && waitingBotDiv) {
+                    chatbox.removeChild(waitingBotDiv);
+                    waitingBotDiv = null;
+                  }
+
+                  chatbox.scrollTop = chatbox.scrollHeight;
+                }
+
+                lastMessageId = message.id;
+              }
+            });
         } catch (error) {
           console.error("Error loading messages:", error);
         }
       }
 
-      window.onload = loadMessages;
+      window.onload = () => {
+        loadMessages();
+        setInterval(loadMessages, 3000);
+      };
 
       document
         .getElementById("input")
         .addEventListener("keydown", function (event) {
           if (event.key === "Enter") {
-            event.preventDefault(); // Ngăn Enter xuống dòng
-            sendMessage(); // Gọi hàm gửi tin nhắn
+            event.preventDefault();
+            sendMessage();
           }
         });
 
-        async function sendMessage() {
-    const input = document.getElementById("input");
-    const chatbox = document.getElementById("chatbox");
-    const userMessage = input.value.trim();
-    if (!userMessage) return;
+      async function sendMessage() {
+        const input = document.getElementById("input");
+        const chatbox = document.getElementById("chatbox");
+        const userMessage = input.value.trim();
+        if (!userMessage) return;
 
-    // Thêm tin nhắn của người dùng vào khung chat
-    const userDiv = document.createElement("div");
-    userDiv.classList.add("message", "user");
-    userDiv.textContent = userMessage;
-    chatbox.appendChild(userDiv);
-    input.value = "";
+        const userDiv = document.createElement("div");
+        userDiv.classList.add("message", "user");
+        userDiv.textContent = userMessage;
+        chatbox.appendChild(userDiv);
+        input.value = "";
 
-    // Thêm placeholder "xin chờ 1 tí..."
-    const botDiv = document.createElement("div");
-    botDiv.classList.add("message", "bot");
-    botDiv.textContent = "🤖 Xin chờ 1 tí...";
-    chatbox.appendChild(botDiv);
-    chatbox.scrollTop = chatbox.scrollHeight;
+        // Tạo tin nhắn bot tạm "đang phản hồi..."
+        waitingBotDiv = document.createElement("div");
+        waitingBotDiv.classList.add("message", "bot");
+        waitingBotDiv.textContent = "🤖 Chat bot đang phản hồi...";
+        chatbox.appendChild(waitingBotDiv);
+        chatbox.scrollTop = chatbox.scrollHeight;
 
-    try {
-      // Gửi log tin nhắn người dùng
-      await fetch("https://innovisionserver.click/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customerId: 1,
-          content: userMessage,
-          is_from_customer: true
-        })
-      });
+        try {
+          await fetch("https://innovisionserver.click/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              customerId: 1,
+              content: userMessage,
+              is_from_customer: true,
+            }),
+          });
 
-      // Gửi lên webhook, timeout sau 5 giây
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 2000);
 
-      const webhookRes = await fetch("https://innovisioncloud.click/webhook-test/chatbot-webhook", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMessage,
-          customerId: 1
-        }),
-        signal: controller.signal
-      });
+          await fetch(
+            "https://innovisioncloud.click/webhook-test/chatbot-webhook",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: userMessage,
+                customerId: 1,
+              }),
+              signal: controller.signal,
+            }
+          );
 
-      clearTimeout(timeout);
-
-      let botReply = "Không có phản hồi từ chatbot.";
-      if (webhookRes.ok) {
-        const data = await webhookRes.json();
-        botReply = data.reply || botReply;
+          clearTimeout(timeout);
+        } catch (error) {
+          console.error("Webhook lỗi hoặc timeout:", error);
+          if (waitingBotDiv) {
+            waitingBotDiv.textContent = "❌ Chatbot không phản hồi.";
+          }
+        }
       }
-
-      // Ghi log phản hồi bot
-      await fetch("https://innovisionserver.click/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customerId: 1,
-          content: botReply,
-          is_from_customer: false
-        })
-      });
-
-      // Cập nhật nội dung tin nhắn "xin chờ" thành phản hồi thật
-      botDiv.textContent = botReply;
-      chatbox.scrollTop = chatbox.scrollHeight;
-    } catch (error) {
-      botDiv.textContent = "Không có phản hồi từ chatbot.";
-      console.error("Webhook timeout hoặc lỗi khác:", error);
-    }
-  }</script>
+    </script>
   </body>
 </html>
