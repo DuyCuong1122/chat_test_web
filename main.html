@@ -119,9 +119,9 @@
                 const div = document.createElement("div");
                 div.classList.add("message", messageClass);
                 div.textContent = message.content;
+
                 chatbox.appendChild(div);
 
-                // Nếu có div bot tạm chờ phản hồi → xoá nó
                 if (!message.is_from_customer && waitingBotDiv) {
                   chatbox.removeChild(waitingBotDiv);
                   waitingBotDiv = null;
@@ -156,14 +156,12 @@
         const userMessage = input.value.trim();
         if (!userMessage) return;
 
-        // Gửi tin nhắn người dùng
         const userDiv = document.createElement("div");
         userDiv.classList.add("message", "user");
         userDiv.textContent = userMessage;
         chatbox.appendChild(userDiv);
         input.value = "";
 
-        // Thêm phản hồi bot tạm
         waitingBotDiv = document.createElement("div");
         waitingBotDiv.classList.add("message", "bot");
         waitingBotDiv.textContent = "🤖 Chat bot đang phản hồi...";
@@ -171,7 +169,6 @@
         chatbox.scrollTop = chatbox.scrollHeight;
 
         try {
-          // Gửi tin nhắn người dùng lên server
           await fetch("https://innovisionserver.click/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -182,7 +179,6 @@
             }),
           });
 
-          // Gọi webhook và nhận phản hồi
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 2000);
 
@@ -201,42 +197,40 @@
 
           clearTimeout(timeout);
 
-          // Xử lý phản hồi từ webhook
-          const responseData = await webhookResponse.json();
-          
-          if (responseData.code === 0) {
-            throw new Error(responseData.message || "Webhook error");
-          }
+          // ✅ Nhận HTML và rút ra văn bản
+          const html = await webhookResponse.text();
+          const tempDiv = document.createElement("div");
+          tempDiv.innerHTML = html;
+          const plainText = tempDiv.textContent || tempDiv.innerText || "";
 
-          // Lưu phản hồi của bot vào database
+          // ✅ Lưu lại vào DB
           await fetch("https://innovisionserver.click/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               customerId: 1,
-              content: responseData.message || responseData,
+              content: plainText,
               is_from_customer: false,
             }),
           });
 
-          // Cập nhật UI với phản hồi của bot
           if (waitingBotDiv) {
-            waitingBotDiv.textContent = responseData.message || responseData;
+            waitingBotDiv.textContent = plainText;
           }
-
         } catch (error) {
           console.error("Webhook lỗi hoặc timeout:", error);
+          const errorMessage = `❌ Lỗi: ${error.message || "Chatbot không phản hồi"}`;
+
           if (waitingBotDiv) {
-            waitingBotDiv.textContent = `❌ Lỗi: ${error.message || "Chatbot không phản hồi"}`;
+            waitingBotDiv.textContent = errorMessage;
           }
 
-          // Lưu thông báo lỗi vào database
           await fetch("https://innovisionserver.click/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               customerId: 1,
-              content: `❌ Lỗi: ${error.message || "Chatbot không phản hồi"}`,
+              content: errorMessage,
               is_from_customer: false,
             }),
           });
